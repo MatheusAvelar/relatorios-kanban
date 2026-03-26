@@ -1,4 +1,4 @@
-name: Relatorio Completo de Tasks
+name: Relatorio por Status e Responsavel
 
 on:
   workflow_dispatch:
@@ -8,11 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Buscar projetos e tasks
+      - name: Buscar dados
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          echo "🔍 Buscando projetos e tasks..."
+          echo "🔍 Buscando dados..."
 
           gh api graphql -f query='
           {
@@ -20,7 +20,6 @@ jobs:
               projectsV2(first: 20) {
                 nodes {
                   title
-                  number
                   items(first: 100) {
                     nodes {
                       content {
@@ -28,6 +27,11 @@ jobs:
                           title
                           state
                           url
+                          assignees(first: 5) {
+                            nodes {
+                              login
+                            }
+                          }
                         }
                       }
                       fieldValues(first: 10) {
@@ -44,34 +48,44 @@ jobs:
             }
           }' > report.json
 
-      - name: Gerar Markdown
+      - name: Gerar Markdown agrupado
         run: |
-          echo "# 📊 Relatório Geral de Tasks" > report.md
+          echo "# 📊 Relatório por Status e Responsável" > report.md
 
           jq -r '
-          .data.user.projectsV2.nodes[] |
-          "## 🗂 Projeto: \(.title)\n" +
+          .data.user.projectsV2.nodes[] as $proj |
+
+          "## 🗂 Projeto: \($proj.title)\n" +
+
           (
-            if (.items.nodes | length) == 0 then
-              "⚠️ Nenhuma task encontrada\n"
-            else
+            # Agrupa por Status
+            ($proj.items.nodes | group_by(.fieldValues.nodes[0]?.name))[] as $status_group |
+
+            "\n### 📌 Status: \($status_group[0].fieldValues.nodes[0]?.name // "Sem Status")\n" +
+
+            (
+              # Agrupa por responsável dentro do status
+              ($status_group | group_by(.content.assignees.nodes[0]?.login))[] as $user_group |
+
+              "\n👤 Responsável: \($user_group[0].content.assignees.nodes[0]?.login // "Não atribuído")\n" +
+
               (
-                .items.nodes[] |
-                "- \(.content?.title // "Sem título") | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content?.state // "N/A")"
+                $user_group[] |
+                "- \(.content?.title // "Sem título")"
               )
-            end
+            )
           )
           ' report.json >> report.md
 
-      - name: Exibir no log
+      - name: Exibir
         run: cat report.md
 
       - name: Publicar no Summary
         run: |
           cat report.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload do relatório
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: relatorio-completo
+          name: relatorio-agrupado
           path: report.md
