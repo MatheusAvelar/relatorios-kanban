@@ -32,9 +32,6 @@ jobs:
                         nodes {
                           ... on ProjectV2ItemFieldSingleSelectValue {
                             name
-                            field {
-                              name
-                            }
                           }
                         }
                       }
@@ -57,7 +54,7 @@ jobs:
           "## 🗂 Projeto: " + .title + "\n" +
           (
             .items.nodes[] |
-            "- \(.content.title) | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content.state)"
+            "- \(.content?.title // "Sem título") | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content?.state // "N/A")"
           )
           ' project.json >> report.md
 
