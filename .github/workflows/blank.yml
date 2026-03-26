@@ -1,34 +1,31 @@
 name: Relatorio de Tasks
 
 on:
-  workflow_dispatch: # manual
-  schedule:
-    - cron: "0 18 * * 5" # toda sexta 18h
+  workflow_dispatch:
 
 jobs:
-  gerar-relatorio:
+  report:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Buscar dados dos projetos
+      - name: Buscar dados do projeto
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api graphql -f query='
           {
-            organization(login: "SUA_ORG") {
-              projectsV2(first: 3) {
+            user(login: "MatheusAvelar") {
+              projectsV2(first: 10) {
                 nodes {
                   title
+                  number
                   items(first: 100) {
                     nodes {
                       content {
                         ... on Issue {
                           title
                           state
+                          url
                         }
                       }
                       fieldValues(first: 10) {
@@ -48,21 +45,21 @@ jobs:
             }
           }' > report.json
 
-      - name: Converter para CSV
+      - name: Filtrar projeto correto (ID 2)
         run: |
-          echo "Projeto,Tarefa,Status,State" > report.csv
-          jq -r '
-          .data.organization.projectsV2.nodes[] as $proj |
-          $proj.items.nodes[] |
-          [
-            $proj.title,
-            .content.title,
-            (.fieldValues.nodes[]?.name // "Sem Status"),
-            .content.state
-          ] | @csv' report.json >> report.csv
+          jq '.data.user.projectsV2.nodes[] | select(.number == 2)' report.json > project.json
 
-      - name: Upload do relatório
-        uses: actions/upload-artifact@v4
-        with:
-          name: relatorio-tasks
-          path: report.csv
+      - name: Gerar Markdown
+        run: |
+          echo "# 📊 Relatório de Tasks" > report.md
+
+          jq -r '
+          "## 🗂 Projeto: " + .title + "\n" +
+          (
+            .items.nodes[] |
+            "- \(.content.title) | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content.state)"
+          )
+          ' project.json >> report.md
+
+      - name: Exibir relatório
+        run: cat report.md
