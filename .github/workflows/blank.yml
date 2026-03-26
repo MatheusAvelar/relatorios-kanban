@@ -1,0 +1,68 @@
+name: Relatorio de Tasks
+
+on:
+  workflow_dispatch: # manual
+  schedule:
+    - cron: "0 18 * * 5" # toda sexta 18h
+
+jobs:
+  gerar-relatorio:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Buscar dados dos projetos
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api graphql -f query='
+          {
+            organization(login: "SUA_ORG") {
+              projectsV2(first: 3) {
+                nodes {
+                  title
+                  items(first: 100) {
+                    nodes {
+                      content {
+                        ... on Issue {
+                          title
+                          state
+                        }
+                      }
+                      fieldValues(first: 10) {
+                        nodes {
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            name
+                            field {
+                              name
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }' > report.json
+
+      - name: Converter para CSV
+        run: |
+          echo "Projeto,Tarefa,Status,State" > report.csv
+          jq -r '
+          .data.organization.projectsV2.nodes[] as $proj |
+          $proj.items.nodes[] |
+          [
+            $proj.title,
+            .content.title,
+            (.fieldValues.nodes[]?.name // "Sem Status"),
+            .content.state
+          ] | @csv' report.json >> report.csv
+
+      - name: Upload do relatório
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-tasks
+          path: report.csv
