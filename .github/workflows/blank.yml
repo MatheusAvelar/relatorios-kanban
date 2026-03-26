@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Buscar projetos
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           echo "🔍 Buscando projetos..."
 
