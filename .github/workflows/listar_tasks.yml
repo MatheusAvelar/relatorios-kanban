@@ -1,7 +1,9 @@
-name: Relatorio por Status e Responsavel
+name: Relatorio Executivo de Tasks
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 18 28 * *" # todo dia 28 (mensal)
 
 jobs:
   report:
@@ -12,8 +14,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          echo "🔍 Buscando dados..."
-
           gh api graphql -f query='
           {
             user(login: "MatheusAvelar") {
@@ -26,7 +26,6 @@ jobs:
                         ... on Issue {
                           title
                           state
-                          url
                           assignees(first: 5) {
                             nodes {
                               login
@@ -48,44 +47,53 @@ jobs:
             }
           }' > report.json
 
-      - name: Gerar Markdown agrupado
+      - name: Gerar Relatório
         run: |
-          echo "# 📊 Relatório por Status e Responsável" > report.md
+          echo "# 📊 Relatório Mensal de Tasks" > report.md
+
+          echo "## 📌 Visão Geral" >> report.md
+          echo "- Total de Tasks: $(jq '[.data.user.projectsV2.nodes[].items.nodes[]] | length' report.json)" >> report.md
+          echo "- Tasks Abertas: $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.state=="OPEN")] | length' report.json)" >> report.md
+          echo "- Tasks Fechadas: $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.state=="CLOSED")] | length' report.json)" >> report.md
+
+          echo "" >> report.md
+          echo "## 📊 Distribuição por Status" >> report.md
 
           jq -r '
-          .data.user.projectsV2.nodes[] as $proj |
-
-          "## 🗂 Projeto: \($proj.title)\n" +
-
-          (
-            # Agrupa por Status
-            ($proj.items.nodes | group_by(.fieldValues.nodes[0]?.name))[] as $status_group |
-
-            "\n### 📌 Status: \($status_group[0].fieldValues.nodes[0]?.name // "Sem Status")\n" +
-
-            (
-              # Agrupa por responsável dentro do status
-              ($status_group | group_by(.content.assignees.nodes[0]?.login))[] as $user_group |
-
-              "\n👤 Responsável: \($user_group[0].content.assignees.nodes[0]?.login // "Não atribuído")\n" +
-
-              (
-                $user_group[] |
-                "- \(.content?.title // "Sem título")"
-              )
-            )
-          )
+          [.data.user.projectsV2.nodes[].items.nodes[]]
+          | group_by(.fieldValues.nodes[0]?.name)
+          | map({
+              status: (.[0].fieldValues.nodes[0]?.name // "Sem Status"),
+              count: length
+            })
+          | .[] | "- \(.status): \(.count)"
           ' report.json >> report.md
 
-      - name: Exibir
-        run: cat report.md
+          echo "" >> report.md
+          echo "## 👤 Distribuição por Responsável" >> report.md
+
+          jq -r '
+          [.data.user.projectsV2.nodes[].items.nodes[]]
+          | group_by(.content.assignees.nodes[0]?.login)
+          | map({
+              user: (.[0].content.assignees.nodes[0]?.login // "Não atribuído"),
+              count: length
+            })
+          | .[] | "- \(.user): \(.count)"
+          ' report.json >> report.md
+
+          echo "" >> report.md
+          echo "## 🚨 Insights" >> report.md
+
+          echo "- Tasks sem responsável: $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.assignees.nodes | length == 0)] | length' report.json)" >> report.md
+
+          echo "- Tasks abertas (atenção): $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.state=="OPEN")] | length' report.json)" >> report.md
 
       - name: Publicar no Summary
-        run: |
-          cat report.md >> $GITHUB_STEP_SUMMARY
+        run: cat report.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: relatorio-agrupado
+          name: relatorio-executivo
           path: report.md
