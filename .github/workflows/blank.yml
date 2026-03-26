@@ -8,10 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Buscar dados do projeto
+      - name: Buscar dados dos projetos
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "🔍 Buscando projetos..."
           gh api graphql -f query='
           {
             user(login: "MatheusAvelar") {
@@ -42,21 +43,58 @@ jobs:
             }
           }' > report.json
 
-      - name: Filtrar projeto correto (ID 2)
+          echo "✅ JSON gerado"
+
+      # 🔍 DEBUG 1 - listar projetos encontrados
+      - name: Debug - listar projetos
         run: |
-          jq '.data.user.projectsV2.nodes[] | select(.number == 2)' report.json > project.json
+          echo "📊 Projetos encontrados:"
+          jq -r '.data.user.projectsV2.nodes[] | "Projeto: \(.title) | Number: \(.number)"' report.json
+
+      # 🔍 DEBUG 2 - salvar projeto filtrado por nome
+      - name: Filtrar projeto correto
+        run: |
+          echo "🎯 Filtrando projeto..."
+          jq '.data.user.projectsV2.nodes[] | select(.title == "Sistema de Monitoramento Python")' report.json > project.json
+
+          echo "📄 Conteúdo filtrado:"
+          cat project.json
+
+      # 🔍 DEBUG 3 - verificar quantidade de items
+      - name: Debug - quantidade de tasks
+        run: |
+          echo "📊 Quantidade de tasks:"
+          jq '.items.nodes | length' project.json
 
       - name: Gerar Markdown
         run: |
           echo "# 📊 Relatório de Tasks" > report.md
 
           jq -r '
-          "## 🗂 Projeto: " + .title + "\n" +
+          "## 🗂 Projeto: " + (.title // "N/A") + "\n" +
           (
-            .items.nodes[] |
-            "- \(.content?.title // "Sem título") | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content?.state // "N/A")"
+            if (.items.nodes | length) == 0 then
+              "⚠️ Nenhuma task encontrada"
+            else
+              (
+                .items.nodes[] |
+                "- \(.content?.title // "Sem título") | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content?.state // "N/A")"
+              )
+            end
           )
           ' project.json >> report.md
 
-      - name: Exibir relatório
+      - name: Exibir no log
         run: cat report.md
+
+      # ⭐ MELHOR VISUALIZAÇÃO (RECOMENDADO)
+      - name: Publicar no Summary
+        run: |
+          cat report.md >> $GITHUB_STEP_SUMMARY
+
+      # 📁 Baixar arquivo depois
+      - name: Upload do relatório
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-tasks
+          path: report.md
