@@ -1,108 +1,45 @@
-name: Relatorio de Tasks
+name: Listar Projetos
 
 on:
   workflow_dispatch:
 
 jobs:
-  report:
+  listar:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Buscar dados dos projetos
+      - name: Buscar projetos
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "🔍 Buscando projetos..."
+
           gh api graphql -f query='
           {
             user(login: "MatheusAvelar") {
-              projectsV2(first: 10) {
+              projectsV2(first: 20) {
                 nodes {
                   title
                   number
-                  items(first: 100) {
-                    nodes {
-                      content {
-                        ... on Issue {
-                          title
-                          state
-                          url
-                        }
-                      }
-                      fieldValues(first: 10) {
-                        nodes {
-                          ... on ProjectV2ItemFieldSingleSelectValue {
-                            name
-                          }
-                        }
-                      }
-                    }
-                  }
+                  url
                 }
               }
             }
-          }' > report.json
+          }' > projetos.json
 
-      - name: Debug - listar projetos
+      - name: Exibir projetos
         run: |
           echo "📊 Projetos encontrados:"
-          jq -r '.data.user.projectsV2.nodes[] | "Projeto: \(.title) | Number: \(.number)"' report.json
-
-      # ✅ VALIDAÇÃO + FILTRO
-      - name: Filtrar e validar projeto
-        id: valida_projeto
-        run: |
-          echo "🎯 Buscando projeto pelo nome..."
-
-          PROJECT=$(jq -c '.data.user.projectsV2.nodes[] | select(.title == "Sistema de Monitoramento Python")' report.json)
-
-          if [ -z "$PROJECT" ]; then
-            echo "❌ Projeto NÃO encontrado!"
-            exit 1
-          fi
-
-          echo "$PROJECT" > project.json
-
-          # Extrair nome do projeto
-          PROJECT_NAME=$(echo "$PROJECT" | jq -r '.title')
-
-          echo "✅ Projeto encontrado: $PROJECT_NAME"
-
-          # salvar como output (opcional)
-          echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
-
-      - name: Debug - quantidade de tasks
-        run: |
-          echo "📊 Quantidade de tasks:"
-          jq '.items.nodes | length' project.json
-
-      - name: Gerar Markdown
-        run: |
-          echo "# 📊 Relatório de Tasks" > report.md
-
           jq -r '
-          "## 🗂 Projeto: " + (.title // "N/A") + "\n" +
-          (
-            if (.items.nodes | length) == 0 then
-              "⚠️ Nenhuma task encontrada"
-            else
-              (
-                .items.nodes[] |
-                "- \(.content?.title // "Sem título") | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content?.state // "N/A")"
-              )
-            end
-          )
-          ' project.json >> report.md
-
-      - name: Exibir no log
-        run: cat report.md
+          .data.user.projectsV2.nodes[] |
+          "📁 \(.title) | ID: \(.number) | URL: \(.url)"
+          ' projetos.json
 
       - name: Publicar no Summary
         run: |
-          cat report.md >> $GITHUB_STEP_SUMMARY
+          echo "# 📊 Lista de Projetos" >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload do relatório
-        uses: actions/upload-artifact@v4
-        with:
-          name: relatorio-tasks
-          path: report.md
+          jq -r '
+          .data.user.projectsV2.nodes[] |
+          "- 📁 **\(.title)** (ID: \(.number))"
+          ' projetos.json >> $GITHUB_STEP_SUMMARY
