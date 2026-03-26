@@ -43,24 +43,34 @@ jobs:
             }
           }' > report.json
 
-          echo "✅ JSON gerado"
-
-      # 🔍 DEBUG 1 - listar projetos encontrados
       - name: Debug - listar projetos
         run: |
           echo "📊 Projetos encontrados:"
           jq -r '.data.user.projectsV2.nodes[] | "Projeto: \(.title) | Number: \(.number)"' report.json
 
-      # 🔍 DEBUG 2 - salvar projeto filtrado por nome
-      - name: Filtrar projeto correto
+      # ✅ VALIDAÇÃO + FILTRO
+      - name: Filtrar e validar projeto
+        id: valida_projeto
         run: |
-          echo "🎯 Filtrando projeto..."
-          jq '.data.user.projectsV2.nodes[] | select(.title == "Sistema de Monitoramento Python")' report.json > project.json
+          echo "🎯 Buscando projeto pelo nome..."
 
-          echo "📄 Conteúdo filtrado:"
-          cat project.json
+          PROJECT=$(jq -c '.data.user.projectsV2.nodes[] | select(.title == "Sistema de Monitoramento Python")' report.json)
 
-      # 🔍 DEBUG 3 - verificar quantidade de items
+          if [ -z "$PROJECT" ]; then
+            echo "❌ Projeto NÃO encontrado!"
+            exit 1
+          fi
+
+          echo "$PROJECT" > project.json
+
+          # Extrair nome do projeto
+          PROJECT_NAME=$(echo "$PROJECT" | jq -r '.title')
+
+          echo "✅ Projeto encontrado: $PROJECT_NAME"
+
+          # salvar como output (opcional)
+          echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
+
       - name: Debug - quantidade de tasks
         run: |
           echo "📊 Quantidade de tasks:"
@@ -87,12 +97,10 @@ jobs:
       - name: Exibir no log
         run: cat report.md
 
-      # ⭐ MELHOR VISUALIZAÇÃO (RECOMENDADO)
       - name: Publicar no Summary
         run: |
           cat report.md >> $GITHUB_STEP_SUMMARY
 
-      # 📁 Baixar arquivo depois
       - name: Upload do relatório
         uses: actions/upload-artifact@v4
         with:
