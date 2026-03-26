@@ -1,0 +1,77 @@
+name: Relatorio Completo de Tasks
+
+on:
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Buscar projetos e tasks
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          echo "🔍 Buscando projetos e tasks..."
+
+          gh api graphql -f query='
+          {
+            user(login: "MatheusAvelar") {
+              projectsV2(first: 20) {
+                nodes {
+                  title
+                  number
+                  items(first: 100) {
+                    nodes {
+                      content {
+                        ... on Issue {
+                          title
+                          state
+                          url
+                        }
+                      }
+                      fieldValues(first: 10) {
+                        nodes {
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }' > report.json
+
+      - name: Gerar Markdown
+        run: |
+          echo "# 📊 Relatório Geral de Tasks" > report.md
+
+          jq -r '
+          .data.user.projectsV2.nodes[] |
+          "## 🗂 Projeto: \(.title)\n" +
+          (
+            if (.items.nodes | length) == 0 then
+              "⚠️ Nenhuma task encontrada\n"
+            else
+              (
+                .items.nodes[] |
+                "- \(.content?.title // "Sem título") | Status: \(.fieldValues.nodes[]?.name // "Sem Status") | State: \(.content?.state // "N/A")"
+              )
+            end
+          )
+          ' report.json >> report.md
+
+      - name: Exibir no log
+        run: cat report.md
+
+      - name: Publicar no Summary
+        run: |
+          cat report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload do relatório
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-completo
+          path: report.md
