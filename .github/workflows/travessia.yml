@@ -52,6 +52,18 @@ jobs:
                               }
                             }
                           }
+                          ... on ProjectV2ItemFieldUserValue {
+                            users(first: 5) {
+                              nodes {
+                                login
+                              }
+                            }
+                            field {
+                              ... on ProjectV2FieldCommon {
+                                name
+                              }
+                            }
+                          }
                         }
                       }
                     }
@@ -66,6 +78,9 @@ jobs:
           echo "# 📊 Relatório Mensal por Projeto" > report.md
 
           jq -r '
+          # -------------------------
+          # 🔹 FUNÇÃO: STATUS (coluna)
+          # -------------------------
           def get_status:
             (
               .fieldValues.nodes[]
@@ -77,18 +92,49 @@ jobs:
               | .name
             ) // "Sem Status";
 
+          # -------------------------
+          # 🔹 FUNÇÃO: RESPONSÁVEL
+          # -------------------------
+          def get_assignee:
+            (
+              # 1. Issue (normal)
+              .content.assignees.nodes[0]?.login
+            )
+            //
+            (
+              # 2. Draft item (campo do projeto)
+              .fieldValues.nodes[]
+              | select(
+                  (.field.name == "Assignees") or
+                  (.field.name == "Responsável") or
+                  (.field.name == "Responsáveis")
+                )
+              | .users.nodes[0]?.login
+            )
+            // "Não atribuído";
+
+          # -------------------------
+          # 🔹 LOOP POR PROJETO
+          # -------------------------
           .data.user.projectsV2.nodes[]
           | {
               project: .title,
               items: [.items.nodes[]]
             }
+
           | "## 📁 Projeto: \(.project)\n",
 
+            # -------------------------
+            # 📌 VISÃO GERAL
+            # -------------------------
             "### 📌 Visão Geral",
             "- Total de Tasks: \(.items | length)",
             "- Tasks Abertas: \(.items | map(select(.content.state == "OPEN")) | length)",
             "- Tasks Fechadas: \(.items | map(select(.content.state == "CLOSED")) | length)",
 
+            # -------------------------
+            # 📊 STATUS (COLUNA)
+            # -------------------------
             "\n### 📊 Distribuição por Status (Coluna)",
             (
               .items
@@ -101,12 +147,16 @@ jobs:
               | .[] | "- \(.status): \(.count)"
             ),
 
+            # -------------------------
+            # 👤 RESPONSÁVEL
+            # -------------------------
             "\n### 👤 Distribuição por Responsável",
             (
               .items
-              | group_by(.content.assignees.nodes[0]?.login)
+              | map(. + { user: (get_assignee) })
+              | group_by(.user)
               | map({
-                  user: (.[0].content.assignees.nodes[0]?.login // "Não atribuído"),
+                  user: .[0].user,
                   count: length
                 })
               | .[] | "- \(.user): \(.count)"
