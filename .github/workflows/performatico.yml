@@ -15,12 +15,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y jq
 
-      - name: Buscar dados (filtrado por projeto)
+      - name: Buscar dados
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          echo "🔍 Buscando dados do projeto específico..."
-
           gh api graphql -f query='
           {
             user(login: "MatheusAvelar") {
@@ -32,6 +30,8 @@ jobs:
                       content {
                         ... on Issue {
                           state
+                          createdAt
+                          closedAt
                           assignees(first: 1) {
                             nodes { login }
                           }
@@ -41,17 +41,13 @@ jobs:
                         nodes {
                           ... on ProjectV2ItemFieldSingleSelectValue {
                             name
-                            field {
-                              ... on ProjectV2FieldCommon { name }
-                            }
+                            field { ... on ProjectV2FieldCommon { name } }
                           }
                           ... on ProjectV2ItemFieldUserValue {
                             users(first: 1) {
                               nodes { login }
                             }
-                            field {
-                              ... on ProjectV2FieldCommon { name }
-                            }
+                            field { ... on ProjectV2FieldCommon { name } }
                           }
                         }
                       }
@@ -62,7 +58,7 @@ jobs:
             }
           }' > report.json
 
-      - name: Gerar Relatório
+      - name: Gerar relatório
         run: |
           echo "# 📊 Relatório do Projeto" > report.md
 
@@ -70,29 +66,12 @@ jobs:
           def get_status:
             first(
               .fieldValues.nodes[]
-              | select(
-                  (.field.name == "Status") or
-                  (.field.name == "Stage") or
-                  (.field.name == "Pipeline")
-                )
+              | select(.field.name == "Status")
               | .name
             ) // "Sem Status";
 
-          def get_assignee:
-            (
-              .content.assignees.nodes[0]?.login
-            ) //
-            (
-              first(
-                .fieldValues.nodes[]
-                | select(
-                    (.field.name == "Assignees") or
-                    (.field.name == "Responsável") or
-                    (.field.name == "Responsáveis")
-                  )
-                | .users.nodes[0]?.login
-              )
-            ) // "Não atribuído";
+          def get_user:
+            .content.assignees.nodes[0]?.login // "Não atribuído";
 
           .data.user.projectsV2.nodes[]
           | {
@@ -102,166 +81,117 @@ jobs:
                 | map(select(.content != null))
                 | map({
                     state: .content.state,
-                    status: (get_status),
-                    user: (get_assignee)
+                    status: get_status,
+                    user: get_user,
+                    createdAt: .content.createdAt,
+                    closedAt: .content.closedAt
                   })
               )
             }
 
-          | "## 📁 Projeto: \(.project)\n",
+          | "## Projeto: \(.project)",
+            "- Total: \(.items | length)",
+            "- Abertas: \(.items | map(select(.state == "OPEN")) | length)",
+            "- Fechadas: \(.items | map(select(.state == "CLOSED")) | length)",
 
-            "### 📌 Visão Geral",
-            "- Total de Tasks: \(.items | length)",
-            "- Tasks Abertas: \(.items | map(select(.state == "OPEN")) | length)",
-            "- Tasks Fechadas: \(.items | map(select(.state == "CLOSED")) | length)",
-
-            "\n### 📊 Distribuição por Status",
+            "\n## Status",
             (
               .items
+              | sort_by(.status)
               | group_by(.status)
               | map("- \(.[0].status): \(length)")
               | .[]
             ),
 
-            "\n### 👤 Distribuição por Responsável",
+            "\n## Responsáveis",
             (
               .items
+              | sort_by(.user)
               | group_by(.user)
               | map("- \(.[0].user): \(length)")
               | .[]
-            ),
-
-            "\n-----------------------------------\n"
-          echo "\n# 📊 Dashboard de Produto\n" >> report.md
-          
-          jq -r '
-          def to_month(date):
-            date[0:7];
-          
-          def lead_time_days:
-            if (.content.createdAt != null and .content.closedAt != null) then
-              ((.content.closedAt | fromdateiso8601) - (.content.createdAt | fromdateiso8601)) / 86400
-            else
-              null
-            end;
-          
-          def age_days:
-            if (.content.createdAt != null) then
-              (now - (.content.createdAt | fromdateiso8601)) / 86400
-            else
-              null
-            end;
-          
-          .data.user.projectsV2.nodes[]
-          | .items.nodes
-          | map(select(.content != null))
-          
-          | {
-              created: map(select(.content.createdAt != null)),
-              closed: map(select(.content.closedAt != null)),
-              all: .
-            }
-          
-          # -------------------------
-          # 📈 CRIADAS POR MÊS
-          # -------------------------
-          | "\n## 📈 Tasks Criadas por Mês",
-          (
-            .created
-            | map(.content.createdAt | to_month(.))
-            | group_by(.)
-            | map({month: .[0], count: length})
-            | sort_by(.month)
-            | "```mermaid",
-              "lineChart",
-              "    title Tasks Criadas",
-              "    x-axis Mês",
-              "    y-axis Quantidade",
-              "    data",
-              ( .[] | "        \"\(.month)\": \(.count)" ),
-              "```"
-          ),
-          
-          # -------------------------
-          # 🚀 FINALIZADAS POR MÊS
-          # -------------------------
-          "\n## 🚀 Tasks Finalizadas por Mês",
-          (
-            .closed
-            | map(.content.closedAt | to_month(.))
-            | group_by(.)
-            | map({month: .[0], count: length})
-            | sort_by(.month)
-            | "```mermaid",
-              "lineChart",
-              "    title Tasks Finalizadas",
-              "    x-axis Mês",
-              "    y-axis Quantidade",
-              "    data",
-              ( .[] | "        \"\(.month)\": \(.count)" ),
-              "```"
-          ),
-          
-          # -------------------------
-          # ⏱️ LEAD TIME
-          # -------------------------
-          "\n## ⏱️ Lead Time Médio (dias)",
-          (
-            .closed
-            | map(. + { lt: lead_time_days })
-            | map(select(.lt != null))
-            | group_by(.content.createdAt[0:7])
-            | map({
-                month: .[0].content.createdAt[0:7],
-                avg: (map(.lt) | add / length)
-              })
-            | sort_by(.month)
-            | "```mermaid",
-              "lineChart",
-              "    title Lead Time Médio",
-              "    x-axis Mês",
-              "    y-axis Dias",
-              "    data",
-              ( .[] | "        \"\(.month)\": \(.avg|floor)" ),
-              "```"
-          ),
-          
-          # -------------------------
-          # ⚠️ AGING
-          # -------------------------
-          "\n## ⚠️ Tasks Antigas (>7 dias)",
-          (
-            .all
-            | map(. + { age: age_days })
-            | map(select(.age != null and .age > 7 and .content.state == "OPEN"))
-            | length
-            | "- Total: \(.) tasks antigas"
-          ),
-          
-          # -------------------------
-          # 👥 PRODUTIVIDADE
-          # -------------------------
-          "\n## 👥 Produtividade por Responsável",
-          (
-            .all
-            | map({
-                user:
-                  (
-                    .content.assignees.nodes[0]?.login
-                    // "Não atribuído"
-                  )
-              })
-            | group_by(.user)
-            | map("- \(.[0].user): \(length)")
-            | .[]
-          )
+            )
           ' report.json >> report.md
 
-      - name: Publicar no Summary
-        run: cat report.md >> $GITHUB_STEP_SUMMARY
+          echo "\n# 📊 Dashboard de Produto" >> report.md
 
-      - name: Upload do relatório
-        uses: actions/upload-artifact@v4
-        with:
-          name: relatorio-executivo
-          path: report.md
+          jq -r '
+          def to_month: .[0:7];
+
+          def lead_time:
+            if (.closedAt != null and .createdAt != null) then
+              ((.closedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 86400
+            else null end;
+
+          .data.user.projectsV2.nodes[].items.nodes
+          | map(select(.content != null))
+          | map({
+              createdAt: .content.createdAt,
+              closedAt: .content.closedAt,
+              state: .content.state,
+              user: (.content.assignees.nodes[0]?.login // "N/A")
+            })
+
+          | {
+              created: map(select(.createdAt != null)),
+              closed: map(select(.closedAt != null)),
+              all: .
+            }
+
+          # Criadas por mês
+          | "\n## Criadas por mês",
+            (
+              .created
+              | map(.createdAt | to_month)
+              | sort
+              | group_by(.)
+              | map("- \(.[0]): \(length)")
+              | .[]
+            ),
+
+          # Finalizadas por mês
+          "\n## Finalizadas por mês",
+            (
+              .closed
+              | map(.closedAt | to_month)
+              | sort
+              | group_by(.)
+              | map("- \(.[0]): \(length)")
+              | .[]
+            ),
+
+          # Lead time
+          "\n## Lead Time Médio",
+            (
+              .closed
+              | map(. + { lt: lead_time })
+              | map(select(.lt != null))
+              | if length > 0 then
+                  (map(.lt) | add / length | floor | "- Média: \(.) dias")
+                else
+                  "- Sem dados"
+                end
+            ),
+
+          # Aging
+          "\n## Tasks antigas (>7 dias)",
+            (
+              .all
+              | map(select(.state == "OPEN"))
+              | length
+              | "- Total abertas: \(.)"
+            ),
+
+          # Produtividade
+          "\n## Produtividade",
+            (
+              .all
+              | sort_by(.user)
+              | group_by(.user)
+              | map("- \(.[0].user): \(length)")
+              | .[]
+            )
+          ' report.json >> report.md
+
+      - name: Publicar
+        run: cat report.md >> $GITHUB_STEP_SUMMARY
