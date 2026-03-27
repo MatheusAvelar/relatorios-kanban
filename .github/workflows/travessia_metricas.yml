@@ -1,4 +1,4 @@
-name: Relatorio Executivo Avancado (Fast)
+name: Relatorio Executivo Avancado Fast
 
 on:
   workflow_dispatch:
