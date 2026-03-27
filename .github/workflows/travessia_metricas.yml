@@ -1,0 +1,206 @@
+name: Relatorio Executivo Avancado
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 28 * *"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Instalar dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Buscar dados
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh api graphql -f query='
+          {
+            user(login: "MatheusAvelar") {
+              projectsV2(first: 20) {
+                nodes {
+                  title
+                  items(first: 100) {
+                    nodes {
+                      content {
+                        ... on Issue {
+                          title
+                          state
+                          createdAt
+                          closedAt
+                          assignees(first: 5) {
+                            nodes {
+                              login
+                            }
+                          }
+                        }
+                      }
+                      fieldValues(first: 20) {
+                        nodes {
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            name
+                            field {
+                              ... on ProjectV2FieldCommon {
+                                name
+                              }
+                            }
+                          }
+                          ... on ProjectV2ItemFieldUserValue {
+                            users(first: 5) {
+                              nodes {
+                                login
+                              }
+                            }
+                            field {
+                              ... on ProjectV2FieldCommon {
+                                name
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }' > report.json
+
+      - name: Gerar Relatório Avançado
+        run: |
+          echo "# 📊 Dashboard de Tasks (últimos 30 dias)" > report.md
+
+          jq -r '
+          def now: now;
+          def days_30: 2592000; # 30 dias em segundos
+
+          # STATUS (coluna)
+          def get_status:
+            (
+              .fieldValues.nodes[]
+              | select(
+                  (.field.name == "Status") or
+                  (.field.name == "Stage") or
+                  (.field.name == "Pipeline")
+                )
+              | .name
+            ) // "Sem Status";
+
+          # RESPONSÁVEL
+          def get_assignee:
+            (
+              .content.assignees.nodes[0]?.login
+            )
+            //
+            (
+              .fieldValues.nodes[]
+              | select(
+                  (.field.name == "Assignees") or
+                  (.field.name == "Responsável") or
+                  (.field.name == "Responsáveis")
+                )
+              | .users.nodes[0]?.login
+            )
+            // "Não atribuído";
+
+          .data.user.projectsV2.nodes[]
+          | {
+              project: .title,
+              items: [.items.nodes[]]
+            }
+
+          | "## 📁 Projeto: \(.project)\n",
+
+            # -------------------------
+            # 📌 VISÃO GERAL
+            # -------------------------
+            "### 📌 Visão Geral",
+            "- Total: \(.items | length)",
+            "- Abertas: \(.items | map(select(.content.state == "OPEN")) | length)",
+            "- Fechadas: \(.items | map(select(.content.state == "CLOSED")) | length)",
+
+            # -------------------------
+            # 🔥 THROUGHPUT (últimos 30 dias)
+            # -------------------------
+            "\n### 🔥 Throughput (30 dias)",
+            "- Tasks finalizadas: \(
+              .items
+              | map(select(
+                  .content.closedAt != null and
+                  ((now - (.content.closedAt | fromdateiso8601)) <= days_30)
+                ))
+              | length
+            )",
+
+            # -------------------------
+            # ⏱️ LEAD TIME
+            # -------------------------
+            "\n### ⏱️ Lead Time Médio",
+            "- Dias: \(
+              [
+                .items[]
+                | select(.content.closedAt != null)
+                | ((.content.closedAt | fromdateiso8601) - (.content.createdAt | fromdateiso8601)) / 86400
+              ]
+              | if length > 0 then (add / length | floor) else 0 end
+            )",
+
+            # -------------------------
+            # 🐢 AGING
+            # -------------------------
+            "\n### 🐢 Tasks Antigas (Abertas > 7 dias)",
+            (
+              .items
+              | map(select(
+                  .content.state == "OPEN" and
+                  ((now - (.content.createdAt | fromdateiso8601)) > 604800)
+                ))
+              | length
+              | "- Quantidade: \(.)"
+            ),
+
+            # -------------------------
+            # 📊 STATUS
+            # -------------------------
+            "\n### 📊 Status (Coluna)",
+            (
+              .items
+              | map(. + { status: (get_status) })
+              | group_by(.status)
+              | map({ status: .[0].status, count: length })
+              | .[] | "- \(.status): \(.count)"
+            ),
+
+            # -------------------------
+            # 👤 PRODUTIVIDADE
+            # -------------------------
+            "\n### 👤 Produtividade (Tasks Fechadas)",
+            (
+              .items
+              | map(select(.content.closedAt != null))
+              | map(. + { user: (get_assignee) })
+              | group_by(.user)
+              | map({
+                  user: .[0].user,
+                  count: length
+                })
+              | sort_by(-.count)
+              | .[] | "- \(.user): \(.count)"
+            ),
+
+            "\n-----------------------------------\n"
+          ' report.json >> report.md
+
+      - name: Publicar no Summary
+        run: cat report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-tasks
+          path: report.md
