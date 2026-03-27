@@ -1,4 +1,4 @@
-name: Relatorio Executivo de Tasks
+name: Relatorio Executivo de Tasks Mensal
 
 on:
   workflow_dispatch:
