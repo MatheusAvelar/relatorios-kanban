@@ -113,19 +113,19 @@ jobs:
             "N/A";
 
           # -------------------------
-          # TRANSFORMAÇÃO (IGNORA DRAFT)
+          # TRANSFORMAÇÃO
           # -------------------------
           .data.user.projectsV2.nodes[]
           | {
               project: .title,
               items: (
                 .items.nodes
-                | map(select(.content != null and .content.createdAt != null))
+                | map(select(.content != null))
                 | map({
                     state: .content.state,
                     status: get_status,
                     user: get_assignee,
-                    created: .content.createdAt,
+                    created: (.content.createdAt // "N/A"),
                     done: get_done_date
                   })
               )
@@ -156,13 +156,6 @@ jobs:
               | sort_by(.user)
               | group_by(.user)
               | map("- \(.[0].user): \(length)")
-              | .[]
-            ),
-
-            "\n### 📅 Datas (amostra)",
-            (
-              .items[0:5]
-              | map("- Criada: \(.created) | Concluída: \(.done)")
               | .[]
             ),
 
