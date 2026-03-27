@@ -113,19 +113,19 @@ jobs:
             "N/A";
 
           # -------------------------
-          # TRANSFORMAÇÃO
+          # TRANSFORMAÇÃO (IGNORA DRAFT)
           # -------------------------
           .data.user.projectsV2.nodes[]
           | {
               project: .title,
               items: (
                 .items.nodes
-                | map(select(.content != null))
+                | map(select(.content != null and .content.createdAt != null))
                 | map({
                     state: .content.state,
                     status: get_status,
                     user: get_assignee,
-                    created: (.content.createdAt // "N/A"),
+                    created: .content.createdAt,
                     done: get_done_date
                   })
               )
