@@ -82,9 +82,6 @@ jobs:
           def now: now;
           def days_30: 2592000;
 
-          # -------------------------
-          # 🔹 STATUS (coluna)
-          # -------------------------
           def get_status:
             (
               .fieldValues.nodes[]
@@ -96,9 +93,6 @@ jobs:
               | .name
             ) // "Sem Status";
 
-          # -------------------------
-          # 🔹 RESPONSÁVEL
-          # -------------------------
           def get_assignee:
             (
               .content.assignees.nodes[0]?.login
@@ -115,9 +109,6 @@ jobs:
             )
             // "Não atribuído";
 
-          # -------------------------
-          # 🔹 DATA DE CRIAÇÃO (robusta)
-          # -------------------------
           def get_created_date:
             (
               .content.createdAt
@@ -127,16 +118,10 @@ jobs:
               .createdAt
             );
 
-          # -------------------------
-          # 🔹 É DONE?
-          # -------------------------
           def is_done:
             (get_status | ascii_downcase) as $s
             | ($s == "done" or $s == "concluído" or $s == "finalizado");
 
-          # -------------------------
-          # 🔹 LOOP POR PROJETO
-          # -------------------------
           .data.user.projectsV2.nodes[]
           | {
               project: .title,
@@ -149,17 +134,11 @@ jobs:
 
           | "## 📁 Projeto: \(.project)\n",
 
-            # -------------------------
-            # 📌 VISÃO GERAL
-            # -------------------------
             "### 📌 Visão Geral",
             "- Total: \(.items | length)",
             "- Abertas: \(.items | map(select(.status != "Done")) | length)",
             "- Fechadas: \(.items | map(select(.status == "Done")) | length)",
 
-            # -------------------------
-            # 🔥 THROUGHPUT (CORRIGIDO)
-            # -------------------------
             "\n### 🔥 Throughput (30 dias)",
             "- Tasks finalizadas: \(
               .items
@@ -171,9 +150,6 @@ jobs:
               | length
             )",
 
-            # -------------------------
-            # ⏱️ LEAD TIME (CORRIGIDO)
-            # -------------------------
             "\n### ⏱️ Lead Time Médio",
             "- Dias: \(
               [
@@ -184,9 +160,6 @@ jobs:
               | if length > 0 then (add / length | floor) else 0 end
             )",
 
-            # -------------------------
-            # 🐢 AGING (CORRIGIDO)
-            # -------------------------
             "\n### 🐢 Tasks Antigas (Abertas > 7 dias)",
             "- Quantidade: \(
               .items
@@ -199,8 +172,66 @@ jobs:
             )",
 
             # -------------------------
-            # 📊 STATUS
+            # 📈 SCORE DE PRODUTIVIDADE
             # -------------------------
+            "\n### 📈 Score de Produtividade",
+            (
+              (
+                .items
+                | map(select(
+                    (is_done) and
+                    (.created != null) and
+                    ((now - (.created | fromdateiso8601)) <= days_30)
+                  ))
+                | length
+              ) as $throughput
+
+              |
+
+              (
+                [
+                  .items[]
+                  | select(is_done and (.created != null))
+                  | ((now - (.created | fromdateiso8601)) / 86400)
+                ]
+                | if length > 0 then (add / length) else 0 end
+              ) as $leadtime
+
+              |
+
+              (
+                .items
+                | map(select(
+                    (is_done | not) and
+                    (.created != null) and
+                    ((now - (.created | fromdateiso8601)) > 604800)
+                  ))
+                | length
+              ) as $aging
+
+              |
+
+              (
+                ($throughput * 5)
+                + (30 - $leadtime)
+                - ($aging * 2)
+              ) as $score
+
+              |
+
+              "- Score: \($score | floor)",
+              "- Throughput: \($throughput)",
+              "- Lead Time: \($leadtime | floor) dias",
+              "- Aging: \($aging)",
+              "- Classificação: \(
+                  if $score >= 80 then "🚀 Alta performance"
+                  elif $score >= 50 then "👍 Saudável"
+                  elif $score >= 20 then "⚠️ Atenção"
+                  else "🔥 Crítico"
+                  end
+                )"
+            ),
+
             "\n### 📊 Status (Coluna)",
             (
               .items
@@ -209,9 +240,6 @@ jobs:
               | .[] | "- \(.status): \(.count)"
             ),
 
-            # -------------------------
-            # 👤 RESPONSÁVEL
-            # -------------------------
             "\n### 👤 Distribuição por Responsável",
             (
               .items
