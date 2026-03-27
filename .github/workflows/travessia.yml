@@ -1,9 +1,9 @@
-name: Relatorio Executivo de Tasks Mensal
+name: Relatorio Executivo de Tasks
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 18 28 * *" # todo dia 28 às 18h
+    - cron: "0 18 28 * *"
 
 jobs:
   report:
@@ -42,10 +42,15 @@ jobs:
                           }
                         }
                       }
-                      fieldValues(first: 10) {
+                      fieldValues(first: 20) {
                         nodes {
                           ... on ProjectV2ItemFieldSingleSelectValue {
                             name
+                            field {
+                              ... on ProjectV2FieldCommon {
+                                name
+                              }
+                            }
                           }
                         }
                       }
@@ -61,6 +66,17 @@ jobs:
           echo "# 📊 Relatório Mensal por Projeto" > report.md
 
           jq -r '
+          def get_status:
+            (
+              .fieldValues.nodes[]
+              | select(
+                  (.field.name == "Status") or
+                  (.field.name == "Stage") or
+                  (.field.name == "Pipeline")
+                )
+              | .name
+            ) // "Sem Status";
+
           .data.user.projectsV2.nodes[]
           | {
               project: .title,
@@ -73,12 +89,13 @@ jobs:
             "- Tasks Abertas: \(.items | map(select(.content.state == "OPEN")) | length)",
             "- Tasks Fechadas: \(.items | map(select(.content.state == "CLOSED")) | length)",
 
-            "\n### 📊 Distribuição por Status",
+            "\n### 📊 Distribuição por Status (Coluna)",
             (
               .items
-              | group_by(.fieldValues.nodes[0]?.name)
+              | map(. + { status: (get_status) })
+              | group_by(.status)
               | map({
-                  status: (.[0].fieldValues.nodes[0]?.name // "Sem Status"),
+                  status: .[0].status,
                   count: length
                 })
               | .[] | "- \(.status): \(.count)"
