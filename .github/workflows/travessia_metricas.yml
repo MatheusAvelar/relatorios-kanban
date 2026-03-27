@@ -19,6 +19,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          echo "🔍 Buscando dados..."
+
           gh api graphql -f query='
           {
             user(login: "MatheusAvelar") {
@@ -27,6 +29,7 @@ jobs:
                   title
                   items(first: 100) {
                     nodes {
+                      createdAt
                       content {
                         ... on Issue {
                           title
@@ -77,9 +80,11 @@ jobs:
 
           jq -r '
           def now: now;
-          def days_30: 2592000; # 30 dias em segundos
+          def days_30: 2592000;
 
-          # STATUS (coluna)
+          # -------------------------
+          # 🔹 STATUS (coluna)
+          # -------------------------
           def get_status:
             (
               .fieldValues.nodes[]
@@ -91,7 +96,9 @@ jobs:
               | .name
             ) // "Sem Status";
 
-          # RESPONSÁVEL
+          # -------------------------
+          # 🔹 RESPONSÁVEL (Issue + Draft)
+          # -------------------------
           def get_assignee:
             (
               .content.assignees.nodes[0]?.login
@@ -108,6 +115,21 @@ jobs:
             )
             // "Não atribuído";
 
+          # -------------------------
+          # 🔹 DATA DE CRIAÇÃO (Issue + Draft)
+          # -------------------------
+          def get_created_date:
+            (
+              .content.createdAt
+            )
+            //
+            (
+              .createdAt
+            );
+
+          # -------------------------
+          # 🔹 LOOP POR PROJETO
+          # -------------------------
           .data.user.projectsV2.nodes[]
           | {
               project: .title,
@@ -121,11 +143,11 @@ jobs:
             # -------------------------
             "### 📌 Visão Geral",
             "- Total: \(.items | length)",
-            "- Abertas: \(.items | map(select(.content.state == "OPEN")) | length)",
+            "- Abertas: \(.items | map(select(.content.state == "OPEN" or .content == null)) | length)",
             "- Fechadas: \(.items | map(select(.content.state == "CLOSED")) | length)",
 
             # -------------------------
-            # 🔥 THROUGHPUT (últimos 30 dias)
+            # 🔥 THROUGHPUT
             # -------------------------
             "\n### 🔥 Throughput (30 dias)",
             "- Tasks finalizadas: \(
@@ -151,18 +173,21 @@ jobs:
             )",
 
             # -------------------------
-            # 🐢 AGING
+            # 🐢 AGING (CORRIGIDO)
             # -------------------------
             "\n### 🐢 Tasks Antigas (Abertas > 7 dias)",
-            (
+            "- Quantidade: \(
               .items
               | map(select(
-                  .content.state == "OPEN" and
-                  ((now - (.content.createdAt | fromdateiso8601)) > 604800)
+                  (
+                    (.content.state == "OPEN") or (.content == null)
+                  ) and
+                  (
+                    (now - (get_created_date | fromdateiso8601)) > 604800
+                  )
                 ))
               | length
-              | "- Quantidade: \(.)"
-            ),
+            )",
 
             # -------------------------
             # 📊 STATUS
@@ -177,19 +202,17 @@ jobs:
             ),
 
             # -------------------------
-            # 👤 PRODUTIVIDADE
+            # 👤 RESPONSÁVEL
             # -------------------------
-            "\n### 👤 Produtividade (Tasks Fechadas)",
+            "\n### 👤 Distribuição por Responsável",
             (
               .items
-              | map(select(.content.closedAt != null))
               | map(. + { user: (get_assignee) })
               | group_by(.user)
               | map({
                   user: .[0].user,
                   count: length
                 })
-              | sort_by(-.count)
               | .[] | "- \(.user): \(.count)"
             ),
 
