@@ -1,9 +1,7 @@
-name: Relatorio Executivo Avancado
+name: Relatorio Executivo Avancado (Fast)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 18 28 * *"
 
 jobs:
   report:
@@ -11,20 +9,18 @@ jobs:
 
     steps:
       - name: Instalar dependências
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Buscar dados
+      - name: Buscar dados (OTIMIZADO)
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          echo "🔍 Buscando dados..."
+          echo "🚀 Buscando projeto específico..."
 
           gh api graphql -f query='
           {
             user(login: "MatheusAvelar") {
-              projectsV2(first: 20) {
+              projectsV2(first: 10) {
                 nodes {
                   title
                   items(first: 100) {
@@ -32,18 +28,11 @@ jobs:
                       createdAt
                       content {
                         ... on Issue {
-                          title
                           state
                           createdAt
-                          closedAt
-                          assignees(first: 5) {
-                            nodes {
-                              login
-                            }
-                          }
                         }
                       }
-                      fieldValues(first: 20) {
+                      fieldValues(first: 10) {
                         nodes {
                           ... on ProjectV2ItemFieldSingleSelectValue {
                             name
@@ -54,7 +43,7 @@ jobs:
                             }
                           }
                           ... on ProjectV2ItemFieldUserValue {
-                            users(first: 5) {
+                            users(first: 1) {
                               nodes {
                                 login
                               }
@@ -74,191 +63,122 @@ jobs:
             }
           }' > report.json
 
-      - name: Gerar Relatório Avançado
+      - name: Gerar relatório (FAST)
         run: |
-          echo "# 📊 Dashboard de Tasks (últimos 30 dias)" > report.md
+          echo "# 📊 Dashboard de Tasks" > report.md
 
           jq -r '
           def now: now;
-          def days_30: 2592000;
 
           def get_status:
             (
               .fieldValues.nodes[]
-              | select(
-                  (.field.name == "Status") or
-                  (.field.name == "Stage") or
-                  (.field.name == "Pipeline")
-                )
+              | select(.field.name == "Status")
               | .name
             ) // "Sem Status";
 
-          def get_assignee:
-            (
-              .content.assignees.nodes[0]?.login
-            )
-            //
-            (
-              .fieldValues.nodes[]
-              | select(
-                  (.field.name == "Assignees") or
-                  (.field.name == "Responsável") or
-                  (.field.name == "Responsáveis")
-                )
-              | .users.nodes[0]?.login
-            )
-            // "Não atribuído";
-
-          def get_created_date:
-            (
-              .content.createdAt
-            )
-            //
-            (
-              .createdAt
-            );
+          def get_created:
+            (.content.createdAt // .createdAt);
 
           def is_done:
-            (get_status | ascii_downcase) as $s
-            | ($s == "done" or $s == "concluído" or $s == "finalizado");
+            (get_status | ascii_downcase) == "done";
 
           .data.user.projectsV2.nodes[]
-          | {
-              project: .title,
-              items: [.items.nodes[] | . + {
-                status: (get_status),
-                user: (get_assignee),
-                created: (get_created_date)
-              }]
-            }
+          | select(.title == "Sistema de Monitoramento Python")
+          | .items.nodes
 
-          | "## 📁 Projeto: \(.project)\n",
+          | map({
+              status: (get_status),
+              created: (get_created)
+            })
 
-            "### 📌 Visão Geral",
-            "- Total: \(.items | length)",
-            "- Abertas: \(.items | map(select(.status != "Done")) | length)",
-            "- Fechadas: \(.items | map(select(.status == "Done")) | length)",
+          | . as $items
 
-            "\n### 🔥 Throughput (30 dias)",
-            "- Tasks finalizadas: \(
-              .items
-              | map(select(
-                  (is_done) and
-                  (.created != null) and
-                  ((now - (.created | fromdateiso8601)) <= days_30)
-                ))
-              | length
-            )",
+          # -------------------------
+          # MÉTRICAS (uma única passada)
+          # -------------------------
+          | (
+              reduce $items[] as $i (
+                {
+                  total: 0,
+                  done: 0,
+                  open: 0,
+                  throughput: 0,
+                  aging: 0,
+                  lead_sum: 0,
+                  lead_count: 0
+                };
 
-            "\n### ⏱️ Lead Time Médio",
-            "- Dias: \(
-              [
-                .items[]
-                | select(is_done and (.created != null))
-                | ((now - (.created | fromdateiso8601)) / 86400)
-              ]
-              | if length > 0 then (add / length | floor) else 0 end
-            )",
+                .total += 1 |
 
-            "\n### 🐢 Tasks Antigas (Abertas > 7 dias)",
-            "- Quantidade: \(
-              .items
-              | map(select(
-                  (is_done | not) and
-                  (.created != null) and
-                  ((now - (.created | fromdateiso8601)) > 604800)
-                ))
-              | length
-            )",
+                if $i.status == "Done" then
+                  .done += 1 |
 
-            # -------------------------
-            # 📈 SCORE DE PRODUTIVIDADE
-            # -------------------------
-            "\n### 📈 Score de Produtividade",
-            (
-              (
-                .items
-                | map(select(
-                    (is_done) and
-                    (.created != null) and
-                    ((now - (.created | fromdateiso8601)) <= days_30)
-                  ))
-                | length
-              ) as $throughput
+                  (
+                    (now - ($i.created | fromdateiso8601)) / 86400
+                  ) as $lt |
 
-              |
+                  .lead_sum += $lt |
+                  .lead_count += 1 |
 
-              (
-                [
-                  .items[]
-                  | select(is_done and (.created != null))
-                  | ((now - (.created | fromdateiso8601)) / 86400)
-                ]
-                | if length > 0 then (add / length) else 0 end
-              ) as $leadtime
+                  if (now - ($i.created | fromdateiso8601)) <= 2592000 then
+                    .throughput += 1
+                  else . end
 
-              |
+                else
+                  .open += 1 |
 
-              (
-                .items
-                | map(select(
-                    (is_done | not) and
-                    (.created != null) and
-                    ((now - (.created | fromdateiso8601)) > 604800)
-                  ))
-                | length
-              ) as $aging
+                  if (now - ($i.created | fromdateiso8601)) > 604800 then
+                    .aging += 1
+                  else . end
+                end
+              )
+            )
 
-              |
+          | . as $m
 
-              (
-                ($throughput * 5)
-                + (30 - $leadtime)
-                - ($aging * 2)
-              ) as $score
+          # -------------------------
+          # CÁLCULOS
+          # -------------------------
+          | ($m.lead_sum / ($m.lead_count + 0.0001)) as $lead
 
-              |
+          | (
+              ($m.throughput * 5)
+              + (30 - $lead)
+              - ($m.aging * 2)
+            ) as $score
 
-              "- Score: \($score | floor)",
-              "- Throughput: \($throughput)",
-              "- Lead Time: \($leadtime | floor) dias",
-              "- Aging: \($aging)",
-              "- Classificação: \(
-                  if $score >= 80 then "🚀 Alta performance"
-                  elif $score >= 50 then "👍 Saudável"
-                  elif $score >= 20 then "⚠️ Atenção"
-                  else "🔥 Crítico"
-                  end
-                )"
-            ),
+          # -------------------------
+          # OUTPUT
+          # -------------------------
+          | "
+## 📁 Projeto: Sistema de Monitoramento Python
 
-            "\n### 📊 Status (Coluna)",
-            (
-              .items
-              | group_by(.status)
-              | map({ status: .[0].status, count: length })
-              | .[] | "- \(.status): \(.count)"
-            ),
+### 📌 Visão Geral
+- Total: \($m.total)
+- Abertas: \($m.open)
+- Fechadas: \($m.done)
 
-            "\n### 👤 Distribuição por Responsável",
-            (
-              .items
-              | group_by(.user)
-              | map({
-                  user: .[0].user,
-                  count: length
-                })
-              | .[] | "- \(.user): \(.count)"
-            ),
+### 🔥 Throughput
+- \($m.throughput)
 
-            "\n-----------------------------------\n"
+### ⏱️ Lead Time
+- \($lead | floor) dias
+
+### 🐢 Aging
+- \($m.aging)
+
+### 📈 Score
+- \($score | floor)
+
+### 🏷️ Classificação
+- \(if $score >= 80 then "🚀 Alta"
+   elif $score >= 50 then "👍 Saudável"
+   elif $score >= 20 then "⚠️ Atenção"
+   else "🔥 Crítico"
+   end)
+"
           ' report.json >> report.md
 
-      - name: Publicar no Summary
+      - name: Publicar
         run: cat report.md >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: dashboard-tasks
-          path: report.md
