@@ -1,152 +1,41 @@
-name: Relatorio Executivo de Tasks
+- name: Gerar Relatório Mensal por Projeto
+  run: |
+    echo "# 📊 Relatório Mensal por Projeto" > report.md
 
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 18 28 * *" # todo dia 28
+    jq -r '
+    .data.user.projectsV2.nodes[]
+    | {
+        project: .title,
+        items: [.items.nodes[]]
+      }
+    | "## 📁 Projeto: \(.project)\n",
 
-jobs:
-  report:
-    runs-on: ubuntu-latest
+      "### 📌 Visão Geral",
+      "- Total de Tasks: \(.items | length)",
+      "- Tasks Abertas: \(.items | map(select(.content.state == "OPEN")) | length)",
+      "- Tasks Fechadas: \(.items | map(select(.content.state == "CLOSED")) | length)",
 
-    steps:
-      - name: Buscar dados
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          echo "🔍 Buscando dados..."
+      "\n### 📊 Distribuição por Status",
+      (
+        .items
+        | group_by(.fieldValues.nodes[0]?.name)
+        | map({
+            status: (.[0].fieldValues.nodes[0]?.name // "Sem Status"),
+            count: length
+          })
+        | .[] | "- \(.status): \(.count)"
+      ),
 
-          gh api graphql -f query='
-          {
-            user(login: "MatheusAvelar") {
-              projectsV2(first: 20) {
-                nodes {
-                  title
-                  items(first: 100) {
-                    nodes {
-                      content {
-                        ... on Issue {
-                          title
-                          state
-                          createdAt
-                          closedAt
-                          assignees(first: 5) {
-                            nodes {
-                              login
-                            }
-                          }
-                        }
-                      }
-                      fieldValues(first: 10) {
-                        nodes {
-                          ... on ProjectV2ItemFieldSingleSelectValue {
-                            name
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }' > report.json
+      "\n### 👤 Distribuição por Responsável",
+      (
+        .items
+        | group_by(.content.assignees.nodes[0]?.login)
+        | map({
+            user: (.[0].content.assignees.nodes[0]?.login // "Não atribuído"),
+            count: length
+          })
+        | .[] | "- \(.user): \(.count)"
+      ),
 
-      - name: Gerar Relatório
-        run: |
-          echo "# 📊 Relatório Mensal de Tasks" > report.md
-
-          echo "## 📌 Visão Geral" >> report.md
-          echo "- Total de Tasks: $(jq '[.data.user.projectsV2.nodes[].items.nodes[]] | length' report.json)" >> report.md
-          echo "- Tasks Abertas: $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.state=="OPEN")] | length' report.json)" >> report.md
-          echo "- Tasks Fechadas: $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.state=="CLOSED")] | length' report.json)" >> report.md
-
-          echo "" >> report.md
-          echo "## 📊 Distribuição por Status" >> report.md
-
-          jq -r '
-          [.data.user.projectsV2.nodes[].items.nodes[]]
-          | group_by(.fieldValues.nodes[0]?.name)
-          | map({
-              status: (.[0].fieldValues.nodes[0]?.name // "Sem Status"),
-              count: length
-            })
-          | .[] | "- \(.status): \(.count)"
-          ' report.json >> report.md
-
-          echo "" >> report.md
-          echo "## 👤 Distribuição por Responsável" >> report.md
-
-          jq -r '
-          [.data.user.projectsV2.nodes[].items.nodes[]]
-          | group_by(.content.assignees.nodes[0]?.login)
-          | map({
-              user: (.[0].content.assignees.nodes[0]?.login // "Não atribuído"),
-              count: length
-            })
-          | .[] | "- \(.user): \(.count)"
-          ' report.json >> report.md
-
-          echo "" >> report.md
-          echo "## 🚨 Insights" >> report.md
-
-          echo "- Tasks sem responsável: $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.assignees.nodes | length == 0)] | length' report.json)" >> report.md
-          echo "- Tasks abertas (atenção): $(jq '[.data.user.projectsV2.nodes[].items.nodes[] | select(.content.state=="OPEN")] | length' report.json)" >> report.md
-
-          echo "" >> report.md
-          echo "## ⏱️ Lead Time (Tempo até concluir)" >> report.md
-
-          echo "- Tempo médio geral (dias): $(jq '
-          [ .data.user.projectsV2.nodes[].items.nodes[]
-            | select(.content.closedAt != null)
-            | ((.content.closedAt | fromdateiso8601) - (.content.createdAt | fromdateiso8601)) / 86400
-          ]
-          | if length > 0 then (add / length | floor) else 0 end
-          ' report.json)" >> report.md
-
-          echo "" >> report.md
-          echo "## 👤 Lead Time por Responsável" >> report.md
-
-          jq -r '
-          [ .data.user.projectsV2.nodes[].items.nodes[]
-            | select(.content.closedAt != null)
-          ]
-          | group_by(.content.assignees.nodes[0]?.login)
-          | map({
-              user: (.[0].content.assignees.nodes[0]?.login // "Não atribuído"),
-              avg_days: (
-                if length > 0 then
-                  (map(
-                    ((.content.closedAt | fromdateiso8601) - (.content.createdAt | fromdateiso8601)) / 86400
-                  ) | add / length | floor)
-                else 0 end
-              )
-            })
-          | .[] | "- \(.user): \(.avg_days) dias"
-          ' report.json >> report.md
-
-          echo "" >> report.md
-          echo "## 🐢 Tasks mais demoradas" >> report.md
-
-          jq -r '
-          [ .data.user.projectsV2.nodes[].items.nodes[]
-            | select(.content.closedAt != null)
-            | {
-                title: .content.title,
-                days: (
-                  ((.content.closedAt | fromdateiso8601) - (.content.createdAt | fromdateiso8601)) / 86400
-                  | floor
-                )
-              }
-          ]
-          | sort_by(.days) | reverse | .[0:5]
-          | .[] | "- \(.title): \(.days) dias"
-          ' report.json >> report.md
-
-      - name: Publicar no Summary
-        run: cat report.md >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: relatorio-executivo
-          path: report.md
+      "\n-----------------------------------\n"
+    ' report.json >> report.md
