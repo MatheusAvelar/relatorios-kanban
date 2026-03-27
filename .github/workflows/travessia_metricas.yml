@@ -97,7 +97,7 @@ jobs:
             ) // "Sem Status";
 
           # -------------------------
-          # 🔹 RESPONSÁVEL (Issue + Draft)
+          # 🔹 RESPONSÁVEL
           # -------------------------
           def get_assignee:
             (
@@ -116,7 +116,7 @@ jobs:
             // "Não atribuído";
 
           # -------------------------
-          # 🔹 DATA DE CRIAÇÃO (Issue + Draft)
+          # 🔹 DATA DE CRIAÇÃO (robusta)
           # -------------------------
           def get_created_date:
             (
@@ -128,12 +128,23 @@ jobs:
             );
 
           # -------------------------
+          # 🔹 É DONE?
+          # -------------------------
+          def is_done:
+            (get_status | ascii_downcase) as $s
+            | ($s == "done" or $s == "concluído" or $s == "finalizado");
+
+          # -------------------------
           # 🔹 LOOP POR PROJETO
           # -------------------------
           .data.user.projectsV2.nodes[]
           | {
               project: .title,
-              items: [.items.nodes[]]
+              items: [.items.nodes[] | . + {
+                status: (get_status),
+                user: (get_assignee),
+                created: (get_created_date)
+              }]
             }
 
           | "## 📁 Projeto: \(.project)\n",
@@ -143,31 +154,32 @@ jobs:
             # -------------------------
             "### 📌 Visão Geral",
             "- Total: \(.items | length)",
-            "- Abertas: \(.items | map(select(.content.state == "OPEN" or .content == null)) | length)",
-            "- Fechadas: \(.items | map(select(.content.state == "CLOSED")) | length)",
+            "- Abertas: \(.items | map(select(.status != "Done")) | length)",
+            "- Fechadas: \(.items | map(select(.status == "Done")) | length)",
 
             # -------------------------
-            # 🔥 THROUGHPUT
+            # 🔥 THROUGHPUT (CORRIGIDO)
             # -------------------------
             "\n### 🔥 Throughput (30 dias)",
             "- Tasks finalizadas: \(
               .items
               | map(select(
-                  .content.closedAt != null and
-                  ((now - (.content.closedAt | fromdateiso8601)) <= days_30)
+                  (is_done) and
+                  (.created != null) and
+                  ((now - (.created | fromdateiso8601)) <= days_30)
                 ))
               | length
             )",
 
             # -------------------------
-            # ⏱️ LEAD TIME
+            # ⏱️ LEAD TIME (CORRIGIDO)
             # -------------------------
             "\n### ⏱️ Lead Time Médio",
             "- Dias: \(
               [
                 .items[]
-                | select(.content.closedAt != null)
-                | ((.content.closedAt | fromdateiso8601) - (.content.createdAt | fromdateiso8601)) / 86400
+                | select(is_done and (.created != null))
+                | ((now - (.created | fromdateiso8601)) / 86400)
               ]
               | if length > 0 then (add / length | floor) else 0 end
             )",
@@ -179,12 +191,9 @@ jobs:
             "- Quantidade: \(
               .items
               | map(select(
-                  (
-                    (.content.state == "OPEN") or (.content == null)
-                  ) and
-                  (
-                    (now - (get_created_date | fromdateiso8601)) > 604800
-                  )
+                  (is_done | not) and
+                  (.created != null) and
+                  ((now - (.created | fromdateiso8601)) > 604800)
                 ))
               | length
             )",
@@ -195,7 +204,6 @@ jobs:
             "\n### 📊 Status (Coluna)",
             (
               .items
-              | map(. + { status: (get_status) })
               | group_by(.status)
               | map({ status: .[0].status, count: length })
               | .[] | "- \(.status): \(.count)"
@@ -207,7 +215,6 @@ jobs:
             "\n### 👤 Distribuição por Responsável",
             (
               .items
-              | map(. + { user: (get_assignee) })
               | group_by(.user)
               | map({
                   user: .[0].user,
