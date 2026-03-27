@@ -15,11 +15,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y jq
 
-      - name: Buscar dados (Projeto específico)
+      - name: Buscar dados do projeto
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          echo "🔍 Buscando dados do projeto..."
+          echo "🔍 Buscando dados..."
 
           gh api graphql -f query='
           {
@@ -32,26 +32,28 @@ jobs:
                       content {
                         ... on Issue {
                           state
+                          createdAt
+                          closedAt
                           assignees(first: 1) {
                             nodes { login }
                           }
                         }
                       }
-                      fieldValues(first: 10) {
+                      fieldValues(first: 20) {
                         nodes {
                           ... on ProjectV2ItemFieldSingleSelectValue {
                             name
-                            field {
-                              ... on ProjectV2FieldCommon { name }
-                            }
+                            field { ... on ProjectV2FieldCommon { name } }
                           }
                           ... on ProjectV2ItemFieldUserValue {
                             users(first: 1) {
                               nodes { login }
                             }
-                            field {
-                              ... on ProjectV2FieldCommon { name }
-                            }
+                            field { ... on ProjectV2FieldCommon { name } }
+                          }
+                          ... on ProjectV2ItemFieldDateValue {
+                            date
+                            field { ... on ProjectV2FieldCommon { name } }
                           }
                         }
                       }
@@ -62,7 +64,7 @@ jobs:
             }
           }' > report.json
 
-      - name: Gerar Relatório
+      - name: Gerar relatório
         run: |
           echo "# 📊 Relatório Executivo do Projeto" > report.md
 
@@ -75,14 +77,13 @@ jobs:
               .fieldValues.nodes[]
               | select(
                   (.field.name == "Status") or
-                  (.field.name == "Stage") or
-                  (.field.name == "Pipeline")
+                  (.field.name == "Stage")
                 )
               | .name
             ) // "Sem Status";
 
           # -------------------------
-          # RESPONSÁVEL (CORRIGIDO)
+          # RESPONSÁVEL
           # -------------------------
           def get_assignee:
             (
@@ -90,8 +91,7 @@ jobs:
                 .fieldValues.nodes[]
                 | select(
                     (.field.name == "Assignees") or
-                    (.field.name == "Responsável") or
-                    (.field.name == "Responsáveis")
+                    (.field.name == "Responsável")
                   )
                 | .users.nodes[0]?.login
               )
@@ -100,6 +100,22 @@ jobs:
             (.content.assignees.nodes[0]?.login)
             //
             "Não atribuído";
+
+          # -------------------------
+          # DATA DE CONCLUSÃO (CORRETA)
+          # -------------------------
+          def get_done_date:
+            (
+              first(
+                .fieldValues.nodes[]
+                | select(.field.name == "Data de Conclusão")
+                | .date
+              )
+            )
+            //
+            (.content.closedAt)
+            //
+            null;
 
           # -------------------------
           # TRANSFORMAÇÃO
@@ -113,7 +129,9 @@ jobs:
                 | map({
                     state: .content.state,
                     status: get_status,
-                    user: get_assignee
+                    user: get_assignee,
+                    created: .content.createdAt,
+                    done: get_done_date
                   })
               )
             }
@@ -143,6 +161,13 @@ jobs:
               | sort_by(.user)
               | group_by(.user)
               | map("- \(.[0].user): \(length)")
+              | .[]
+            ),
+
+            "\n### 📅 Datas (amostra)",
+            (
+              .items[0:5]
+              | map("- Criada: \(.created) | Concluída: \(.done // "N/A")")
               | .[]
             ),
 
