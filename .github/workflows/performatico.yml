@@ -132,6 +132,129 @@ jobs:
             ),
 
             "\n-----------------------------------\n"
+          echo "\n# 📊 Dashboard de Produto\n" >> report.md
+          
+          jq -r '
+          def to_month(date):
+            date[0:7];
+          
+          def lead_time_days:
+            if (.content.createdAt != null and .content.closedAt != null) then
+              ((.content.closedAt | fromdateiso8601) - (.content.createdAt | fromdateiso8601)) / 86400
+            else
+              null
+            end;
+          
+          def age_days:
+            if (.content.createdAt != null) then
+              (now - (.content.createdAt | fromdateiso8601)) / 86400
+            else
+              null
+            end;
+          
+          .data.user.projectsV2.nodes[]
+          | .items.nodes
+          | map(select(.content != null))
+          
+          | {
+              created: map(select(.content.createdAt != null)),
+              closed: map(select(.content.closedAt != null)),
+              all: .
+            }
+          
+          # -------------------------
+          # 📈 CRIADAS POR MÊS
+          # -------------------------
+          | "\n## 📈 Tasks Criadas por Mês",
+          (
+            .created
+            | map(.content.createdAt | to_month(.))
+            | group_by(.)
+            | map({month: .[0], count: length})
+            | sort_by(.month)
+            | "```mermaid",
+              "lineChart",
+              "    title Tasks Criadas",
+              "    x-axis Mês",
+              "    y-axis Quantidade",
+              "    data",
+              ( .[] | "        \"\(.month)\": \(.count)" ),
+              "```"
+          ),
+          
+          # -------------------------
+          # 🚀 FINALIZADAS POR MÊS
+          # -------------------------
+          "\n## 🚀 Tasks Finalizadas por Mês",
+          (
+            .closed
+            | map(.content.closedAt | to_month(.))
+            | group_by(.)
+            | map({month: .[0], count: length})
+            | sort_by(.month)
+            | "```mermaid",
+              "lineChart",
+              "    title Tasks Finalizadas",
+              "    x-axis Mês",
+              "    y-axis Quantidade",
+              "    data",
+              ( .[] | "        \"\(.month)\": \(.count)" ),
+              "```"
+          ),
+          
+          # -------------------------
+          # ⏱️ LEAD TIME
+          # -------------------------
+          "\n## ⏱️ Lead Time Médio (dias)",
+          (
+            .closed
+            | map(. + { lt: lead_time_days })
+            | map(select(.lt != null))
+            | group_by(.content.createdAt[0:7])
+            | map({
+                month: .[0].content.createdAt[0:7],
+                avg: (map(.lt) | add / length)
+              })
+            | sort_by(.month)
+            | "```mermaid",
+              "lineChart",
+              "    title Lead Time Médio",
+              "    x-axis Mês",
+              "    y-axis Dias",
+              "    data",
+              ( .[] | "        \"\(.month)\": \(.avg|floor)" ),
+              "```"
+          ),
+          
+          # -------------------------
+          # ⚠️ AGING
+          # -------------------------
+          "\n## ⚠️ Tasks Antigas (>7 dias)",
+          (
+            .all
+            | map(. + { age: age_days })
+            | map(select(.age != null and .age > 7 and .content.state == "OPEN"))
+            | length
+            | "- Total: \(.) tasks antigas"
+          ),
+          
+          # -------------------------
+          # 👥 PRODUTIVIDADE
+          # -------------------------
+          "\n## 👥 Produtividade por Responsável",
+          (
+            .all
+            | map({
+                user:
+                  (
+                    .content.assignees.nodes[0]?.login
+                    // "Não atribuído"
+                  )
+              })
+            | group_by(.user)
+            | map("- \(.[0].user): \(length)")
+            | .[]
+          )
           ' report.json >> report.md
 
       - name: Publicar no Summary
