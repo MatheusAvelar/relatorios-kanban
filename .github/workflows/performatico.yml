@@ -1,4 +1,4 @@
-name: Relatorio Executivo de Tasks Mensal 1
+name: Relatorio Executivo - Projeto Específico
 
 on:
   workflow_dispatch:
@@ -15,16 +15,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y jq
 
-      - name: Buscar dados (otimizado)
+      - name: Buscar dados (filtrado por projeto)
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          echo "🔍 Buscando dados..."
+          echo "🔍 Buscando dados do projeto específico..."
 
           gh api graphql -f query='
           {
             user(login: "MatheusAvelar") {
-              projectsV2(first: 10) {
+              projectsV2(query: "Sistema de Monitoramento Python", first: 1) {
                 nodes {
                   title
                   items(first: 100) {
@@ -62,9 +62,9 @@ jobs:
             }
           }' > report.json
 
-      - name: Gerar Relatório (mais performático)
+      - name: Gerar Relatório
         run: |
-          echo "# 📊 Relatório Mensal por Projeto" > report.md
+          echo "# 📊 Relatório do Projeto" > report.md
 
           jq -r '
           def get_status:
@@ -115,7 +115,7 @@ jobs:
             "- Tasks Abertas: \(.items | map(select(.state == "OPEN")) | length)",
             "- Tasks Fechadas: \(.items | map(select(.state == "CLOSED")) | length)",
 
-            "\n### 📊 Distribuição por Status (Coluna)",
+            "\n### 📊 Distribuição por Status",
             (
               .items
               | group_by(.status)
